@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import time
+import subprocess
 from openai import OpenAI
 from dotenv import load_dotenv
 from .utils import get_env
@@ -18,21 +19,22 @@ class BaseScraper:
         self.cookies = None
 
     def get_chrome_driver(self) -> Chrome:
-        options = Options()
+        PROFILE = r'C:\Users\wlsgy\AppData\Local\Google\Chrome\User Data'
+        PORT = 9122  # Remote debugging port number
+
+        cmd = r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'
+        cmd += f' --user-data-dir="{PROFILE}"'
+        cmd += f' --remote-debugging-port={PORT}'
+        subprocess.Popen(cmd)
+
+        options = webdriver.ChromeOptions()
+        options.add_experimental_option('debuggerAddress', f'127.0.0.1:{PORT}')  # 디버깅 포트로 연결
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-features=BlockThirdPartyCookies")
-
-        options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36"
-        )
-
-        service = Service(ChromeDriverManager().install())
-
-        return webdriver.Chrome(service=service, options=options)
+        return webdriver.Chrome(options=options)
 
     def login(self, login_url: str, login_button_xapth: str, input_infos: list[tuple[str, str]]) -> None:
         try:
@@ -40,30 +42,18 @@ class BaseScraper:
             time.sleep(3)
 
             for xpath, input_string in input_infos:
-                input_element = self.driver.find_element(By.XPATH, xpath)
-                input_element.send_keys(input_string)
+                input_element = self.driver.find_element(By.XPATH, xpath).send_keys(input_string)
 
-            login_button_element = self.driver.find_element(By.XPATH, login_button_xapth)
-            login_button_element.click()
+            self.driver.find_element(By.XPATH, login_button_xapth).click()
 
             time.sleep(3)
-            self.cookies = self.driver.get_cookies()
+
         except NoSuchElementException as e:
             print(f"login error! no such element. {str(e)}")
             raise NoSuchElementException
         except Exception as e:
             print(f"login error! {str(e)}")
             raise e
-
-    def apply_cookies(self):
-        self.driver.delete_all_cookies()
-        time.sleep(1)
-
-        if self.cookies:
-            for cookie in self.cookies:
-                self.driver.add_cookie(cookie)
-        else:
-            print("Cookies unexist")
 
     def driver_quit(self):
         self.driver.quit()
@@ -84,6 +74,7 @@ class Everytime_Scraper(BaseScraper):
             "login__login_button": "/html/body/div[1]/div/form/input",
             "article__title": "//*[@id='container']/div[5]/article/a/h2",
             "article__content": "//*[@id='container']/div[5]/article/a/p",
+            "article__comments": "//*[@id='container']/div[5]/article/div/article",
         }
 
     def login(self, username: str, password: str) -> bool:
@@ -98,15 +89,23 @@ class Everytime_Scraper(BaseScraper):
             input_infos=login_input_infos,
         )
 
+    def article_detail(self, article_url):
+        self.driver.get(article_url)
+        time.sleep(3)
+
+        title, content = self._get_article_info(article_url=article_url)
+
+        comments = self.get_comments(article_url=article_url)
+
+        return {"title": title, "content": content, "comments": comments}
+
     def scrapping(self, start_page, end_page):
         articles = {}
 
         self.apply_cookies()
-        self.driver.refresh()
-        time.sleep(1)
 
         for article_href in self._extrack_article_hrefs(start_page, end_page):
-            title, content = self._get_article_info(article_href)
+            title, content = self._get_article_info(article_url=self.url_dict['home'] + article_href)
             articles[self.url_dict["home"] + article_href] = (title, content)
 
         return articles.__str__()
@@ -131,13 +130,34 @@ class Everytime_Scraper(BaseScraper):
 
         return [i.get("href") for i in href_list]
 
-    def _get_article_info(self, href: str) -> tuple[str, str]:
-        self.driver.get(self.url_dict["home"] + href)
+    def _get_article_info(self, article_url: str) -> tuple[str, str]:
+        self.driver.get(article_url)
         time.sleep(2)
 
         title = self.driver.find_element(By.XPATH, self.xpath_dict["article__title"])
         content = self.driver.find_element(By.XPATH, self.xpath_dict["article__content"])
         return (title.text, content.text)
+
+    def get_comments(self, article_url):
+        self.driver.get(article_url)
+        time.sleep(5)
+        reply_list = []
+
+        comments = self.driver.find_elements(By.XPATH, self.xpath_dict["article__comments"])
+        for comment in comments:
+            comment_class = comment.get_attribute("class")  # parent or child
+            username = comment.find_element(By.TAG_NAME, "h3").text
+            coment_text = comment.find_element(By.TAG_NAME, "p").text
+
+            if comment_class == "parent":
+                reply_list.append({username: coment_text, "replies": []})
+            elif comment_class == "child":
+                parent_reply = reply_list[-1]
+                parent_reply["replies"].append({username: coment_text})
+            else:
+                raise KeyError("클래스명이 parent 또는 child가 아닙니다.")
+
+        return reply_list
 
 
 class GPTManager:
@@ -174,19 +194,3 @@ class GPTManager:
             ],
         )
         return completion.choices[0].message.content
-
-
-if __name__ == "__main__":
-    gpt_manager = GPTManager(
-        api_key=get_env("OPENAI_KEY"),
-        system_content=get_env("ETA_SCEAPPING_SYSTEM_CONTENT"))
-    eta_scraper = Everytime_Scraper()
-
-    eta_scraper.login(username=get_env("USERNAME"), password=get_env("PASSWORD"))
-    articles_info = eta_scraper.scrapping(start_page=1, end_page=5)
-    import pprint
-    pprint.pprint(articles_info)
-    hate_articles_info = gpt_manager.find_hate_article(articles_info=articles_info)
-    pprint.pprint(hate_articles_info)
-
-    eta_scraper.driver_quit()
