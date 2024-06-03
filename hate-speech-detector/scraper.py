@@ -6,11 +6,10 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
-from bs4.element import ResultSet
 import time
 from openai import OpenAI
 from dotenv import load_dotenv
-import os
+from .utils import get_env
 
 
 class BaseScraper:
@@ -28,7 +27,8 @@ class BaseScraper:
         options.add_argument("--disable-features=BlockThirdPartyCookies")
 
         options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36"
+        )
 
         service = Service(ChromeDriverManager().install())
 
@@ -41,7 +41,7 @@ class BaseScraper:
         password: str,
         username_xpath: str,
         password_xpath: str,
-        login_button_xpath: str
+        login_button_xpath: str,
     ) -> bool:
         try:
             self.driver.get(login_url)
@@ -49,14 +49,16 @@ class BaseScraper:
             print(BeautifulSoup(self.driver.page_source, "html.parser").text)
             username_input_element = self.driver.find_element(By.XPATH, username_xpath)
             password_input_element = self.driver.find_element(By.XPATH, password_xpath)
-            login_button_element = self.driver.find_element(By.XPATH, login_button_xpath)
+            login_button_element = self.driver.find_element(
+                By.XPATH, login_button_xpath
+            )
 
             username_input_element.send_keys(username)
             password_input_element.send_keys(password)
 
             login_button_element.click()
-            time.sleep(3)  # 추가적인 시간 대기
-            self.cookies = self.driver.get_cookies()  # 쿠키 저장
+            time.sleep(3)
+            self.cookies = self.driver.get_cookies()
 
             return True
         except NoSuchElementException as e:
@@ -67,7 +69,7 @@ class BaseScraper:
             return False
 
     def apply_cookies(self):
-        self.driver.delete_all_cookies()  # 기존 모든 쿠키 삭제
+        self.driver.delete_all_cookies()
         time.sleep(1)
 
         if self.cookies:
@@ -84,21 +86,23 @@ class Everytime_Scraper(BaseScraper):
     def __init__(self):
         super().__init__(name="eta")
 
-        self.__base_url = 'https://everytime.kr'
-        self.__scrap_url = self.__base_url + '/375208/p/'
+        self.__base_url = "https://everytime.kr"
+        self.__scrap_url = self.__base_url + "/375208/p/"
         self.__login_url = "https://account.everytime.kr/login"
 
     def login(self, username: str, password: str) -> bool:
-        username_xpath = '/html/body/div[1]/div/form/div[1]/input[1]'
-        password_xpath = '/html/body/div[1]/div/form/div[1]/input[2]'
-        login_button_xpath = '/html/body/div[1]/div/form/input'
+        username_xpath = "/html/body/div[1]/div/form/div[1]/input[1]"
+        password_xpath = "/html/body/div[1]/div/form/div[1]/input[2]"
+        login_button_xpath = "/html/body/div[1]/div/form/input"
 
         try:
             self.driver.get(self.__login_url)
             time.sleep(3)
             username_input_element = self.driver.find_element(By.XPATH, username_xpath)
             password_input_element = self.driver.find_element(By.XPATH, password_xpath)
-            login_button_element = self.driver.find_element(By.XPATH, login_button_xpath)
+            login_button_element = self.driver.find_element(
+                By.XPATH, login_button_xpath
+            )
 
             username_input_element.send_keys(username)
             time.sleep(1)
@@ -106,8 +110,8 @@ class Everytime_Scraper(BaseScraper):
             time.sleep(1)
 
             login_button_element.click()
-            time.sleep(5)  # 추가적인 시간 대기
-            self.cookies = self.driver.get_cookies()  # 쿠키 저장
+            time.sleep(5)
+            self.cookies = self.driver.get_cookies()
             time.sleep(1)
 
             return True
@@ -146,58 +150,70 @@ class Everytime_Scraper(BaseScraper):
         time.sleep(3)
 
         html_content = self.driver.page_source
-        soup = BeautifulSoup(html_content, 'html.parser')
-        href_list = soup.select('article.list a.article')
+        soup = BeautifulSoup(html_content, "html.parser")
+        href_list = soup.select("article.list a.article")
 
-        return [i.get('href') for i in href_list]
+        return [i.get("href") for i in href_list]
 
     def _get_article_info(self, href: str) -> tuple[str, str]:
         self.driver.get(self.__base_url + href)
-        print(self.__base_url + href)
-        time.sleep(1)
+        time.sleep(2)
 
         title_xpath = '//*[@id="container"]/div[5]/article/a/h2'
         content_xpath = '//*[@id="container"]/div[5]/article/a/p'
 
+        print(self.__base_url + href)
         title = self.driver.find_element(By.XPATH, title_xpath)
         content = self.driver.find_element(By.XPATH, content_xpath)
         print((title.text, content.text))
+        print()
         return (title.text, content.text)
 
 
 class GPTManager:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, system_content: str, user_content: str = None) -> None:
         load_dotenv()
         self.__client = OpenAI(api_key=api_key)
-        self.__system_content = ""
+        self.__system_content = system_content
+        self.user_content = user_content
 
-    def find_hate_article(self, articles_info):
-        user_content = self._get_user_content(articles_info)
+    def find_hate_article(self, articles_info) -> str:
+        standard = get_env("HATE_ARTICLE_STANDARD")
+        output_form = """
+        ---\n
+        href:\n
+        제목:\n
+        내용:\n
+        혐오 표현 근거:\n
+        ---\n
+        """
+
+        user_content = f"""
+        부적절한 게시글 기준: {standard}\n
+        평가할 게시글 목록: `{articles_info}`\n
+        ---
+        출력은 다음과 같아야 합니다.\n
+        {output_form}
+        """
+
         completion = self.__client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {
-                    "role": "system",
-                    "content": self.__system_content
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                },
-            ]
+                {"role": "system", "content": self.__system_content},
+                {"role": "user", "content": user_content},
+            ],
         )
         return completion.choices[0].message.content
 
-    def _get_user_content(self, articles_info):
-        return f""""""
-
 
 if __name__ == "__main__":
-    gpt_manager = GPTManager(api_key="")
+    gpt_manager = GPTManager(
+        api_key=get_env("OPENAI_KEY"),
+        system_content=get_env("ETA_SCEAPPING_SYSTEM_CONTENT"))
     eta_scraper = Everytime_Scraper()
 
-    eta_scraper.login(username="", password="")
-    articles_info = eta_scraper.scrapping(start_page=1, end_page=1)
+    eta_scraper.login(username=get_env("USERNAME"), password=get_env("PASSWORD"))
+    articles_info = eta_scraper.scrapping(start_page=1, end_page=5)
     import pprint
     pprint.pprint(articles_info)
     hate_articles_info = gpt_manager.find_hate_article(articles_info=articles_info)
