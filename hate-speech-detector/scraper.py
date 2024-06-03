@@ -34,39 +34,26 @@ class BaseScraper:
 
         return webdriver.Chrome(service=service, options=options)
 
-    def login(
-        self,
-        login_url: str,
-        username: str,
-        password: str,
-        username_xpath: str,
-        password_xpath: str,
-        login_button_xpath: str,
-    ) -> bool:
+    def login(self, login_url: str, login_button_xapth: str, input_infos: list[tuple[str, str]]) -> None:
         try:
             self.driver.get(login_url)
             time.sleep(3)
-            print(BeautifulSoup(self.driver.page_source, "html.parser").text)
-            username_input_element = self.driver.find_element(By.XPATH, username_xpath)
-            password_input_element = self.driver.find_element(By.XPATH, password_xpath)
-            login_button_element = self.driver.find_element(
-                By.XPATH, login_button_xpath
-            )
 
-            username_input_element.send_keys(username)
-            password_input_element.send_keys(password)
+            for xpath, input_string in input_infos:
+                input_element = self.driver.find_element(By.XPATH, xpath)
+                input_element.send_keys(input_string)
 
+            login_button_element = self.driver.find_element(By.XPATH, login_button_xapth)
             login_button_element.click()
+
             time.sleep(3)
             self.cookies = self.driver.get_cookies()
-
-            return True
         except NoSuchElementException as e:
             print(f"login error! no such element. {str(e)}")
-            return False
+            raise NoSuchElementException
         except Exception as e:
             print(f"login error! {str(e)}")
-            return False
+            raise e
 
     def apply_cookies(self):
         self.driver.delete_all_cookies()
@@ -85,42 +72,31 @@ class BaseScraper:
 class Everytime_Scraper(BaseScraper):
     def __init__(self):
         super().__init__(name="eta")
+        self.url_dict = {
+            "home": "https://everytime.kr",
+            "free_board": "https://everytime.kr/375208/p",
+            "login": "https://account.everytime.kr/login",
+        }
 
-        self.__base_url = "https://everytime.kr"
-        self.__scrap_url = self.__base_url + "/375208/p/"
-        self.__login_url = "https://account.everytime.kr/login"
+        self.xpath_dict = {
+            "login__username": "/html/body/div[1]/div/form/div[1]/input[1]",
+            "login__password": "/html/body/div[1]/div/form/div[1]/input[2]",
+            "login__login_button": "/html/body/div[1]/div/form/input",
+            "article__title": "//*[@id='container']/div[5]/article/a/h2",
+            "article__content": "//*[@id='container']/div[5]/article/a/p",
+        }
 
     def login(self, username: str, password: str) -> bool:
-        username_xpath = "/html/body/div[1]/div/form/div[1]/input[1]"
-        password_xpath = "/html/body/div[1]/div/form/div[1]/input[2]"
-        login_button_xpath = "/html/body/div[1]/div/form/input"
+        login_input_infos = [
+            (self.xpath_dict["login__username"], username),
+            (self.xpath_dict["login__password"], password),
+        ]
 
-        try:
-            self.driver.get(self.__login_url)
-            time.sleep(3)
-            username_input_element = self.driver.find_element(By.XPATH, username_xpath)
-            password_input_element = self.driver.find_element(By.XPATH, password_xpath)
-            login_button_element = self.driver.find_element(
-                By.XPATH, login_button_xpath
-            )
-
-            username_input_element.send_keys(username)
-            time.sleep(1)
-            password_input_element.send_keys(password)
-            time.sleep(1)
-
-            login_button_element.click()
-            time.sleep(5)
-            self.cookies = self.driver.get_cookies()
-            time.sleep(1)
-
-            return True
-        except NoSuchElementException as e:
-            print(f"login error! no such element. {str(e)}")
-            return False
-        except Exception as e:
-            print(f"login error! {str(e)}")
-            return False
+        super().login(
+            login_url=self.url_dict["login"],
+            login_button_xapth=self.xpath_dict["login__login_button"],
+            input_infos=login_input_infos,
+        )
 
     def scrapping(self, start_page, end_page):
         articles = {}
@@ -131,7 +107,7 @@ class Everytime_Scraper(BaseScraper):
 
         for article_href in self._extrack_article_hrefs(start_page, end_page):
             title, content = self._get_article_info(article_href)
-            articles[self.__base_url + article_href] = (title, content)
+            articles[self.url_dict["home"] + article_href] = (title, content)
 
         return articles.__str__()
 
@@ -146,7 +122,7 @@ class Everytime_Scraper(BaseScraper):
         return article_hrefs
 
     def get_article_hrefs_in_current_page(self, page: int) -> list[str]:
-        self.driver.get(f"{self.__scrap_url}{page}")
+        self.driver.get(f"{self.url_dict['free_board']}/{page}")
         time.sleep(3)
 
         html_content = self.driver.page_source
@@ -156,17 +132,11 @@ class Everytime_Scraper(BaseScraper):
         return [i.get("href") for i in href_list]
 
     def _get_article_info(self, href: str) -> tuple[str, str]:
-        self.driver.get(self.__base_url + href)
+        self.driver.get(self.url_dict["home"] + href)
         time.sleep(2)
 
-        title_xpath = '//*[@id="container"]/div[5]/article/a/h2'
-        content_xpath = '//*[@id="container"]/div[5]/article/a/p'
-
-        print(self.__base_url + href)
-        title = self.driver.find_element(By.XPATH, title_xpath)
-        content = self.driver.find_element(By.XPATH, content_xpath)
-        print((title.text, content.text))
-        print()
+        title = self.driver.find_element(By.XPATH, self.xpath_dict["article__title"])
+        content = self.driver.find_element(By.XPATH, self.xpath_dict["article__content"])
         return (title.text, content.text)
 
 
@@ -180,12 +150,12 @@ class GPTManager:
     def find_hate_article(self, articles_info) -> str:
         standard = get_env("HATE_ARTICLE_STANDARD")
         output_form = """
-        ---\n
-        href:\n
-        제목:\n
-        내용:\n
-        혐오 표현 근거:\n
-        ---\n
+        ---
+        href:
+        제목:
+        내용:
+        혐오 표현 근거:
+        ---
         """
 
         user_content = f"""
