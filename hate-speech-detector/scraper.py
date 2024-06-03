@@ -2,9 +2,6 @@ from selenium.common.exceptions import NoSuchElementException
 from selenium import webdriver
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import time
 import subprocess
@@ -139,7 +136,8 @@ class Everytime_Scraper(BaseScraper):
         return (title.text, content.text)
 
     def get_comments(self, article_url):
-        self.driver.get(article_url)
+        self.driver_get(article_url)
+
         time.sleep(5)
         reply_list = []
 
@@ -158,6 +156,21 @@ class Everytime_Scraper(BaseScraper):
                 raise KeyError("클래스명이 parent 또는 child가 아닙니다.")
 
         return reply_list
+
+    def check_login(self, url: str) -> None:
+        if self.driver.current_url == self.url_dict["login"]:
+            print("Login...")
+
+            self.login(username="wlsgy95", password="qwe123!@#")
+
+            self.driver.get(url)
+            time.sleep(3)
+            if self.driver.current_url == self.url_dict["login"]:
+                raise Exception("로그인에 실패했습니다.")
+
+    def driver_get(self, url: str) -> None:
+        self.driver.get(url)
+        self.check_login(url)
 
 
 class GPTManager:
