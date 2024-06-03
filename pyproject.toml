@@ -13,6 +13,8 @@ selenium = "^4.21.0"
 webdriver-manager = "^4.0.1"
 openai = "^1.30.3"
 python-dotenv = "^1.0.1"
+django = "4.2"
+django-environ = "^0.11.2"
 
 
 [build-system]
